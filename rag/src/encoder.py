@@ -2,13 +2,27 @@ from __future__ import annotations
 
 from pathlib import Path
 import numpy as np
+import torch
 
 
 class LocalEncoder:
-    def __init__(self, model_dir: str | Path, device: str | None = None):
+    def __init__(
+        self,
+        model_dir: str | Path,
+        device: str | None = None,
+        dtype: str = "float16",
+    ):
         from sentence_transformers import SentenceTransformer
 
-        kwargs = {}
+        if dtype not in {"float16", "float32"}:
+            raise ValueError("dtype must be 'float16' or 'float32'")
+
+        model_dtype = (
+            torch.float16 if dtype == "float16" else torch.float32
+        )
+
+        kwargs = {"model_kwargs": {"torch_dtype": model_dtype}}
+
         if device is not None:
             kwargs["device"] = device
 
@@ -36,3 +50,4 @@ class LocalEncoder:
             show_progress_bar=True,
         )
         return np.asarray(arr, dtype=np.float32)
+
