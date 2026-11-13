@@ -46,3 +46,54 @@ class ExactDenseRetriever:
             "scores": [float(scores[int(i)]) for i in idx],
             "latency_ms": elapsed_ms,
         }
+
+    def retrieve_many(self, query_vectors: np.ndarray, k: int = 5):
+        """Exact top-k retrieval for a batch of query embeddings."""
+        if type(k) is not int or k < 1:
+            raise ValueError("k must be a positive integer")
+
+        queries = np.asarray(query_vectors, dtype=np.float32)
+
+        if queries.ndim != 2 or queries.shape[1] != self.embeddings.shape[1]:
+            raise ValueError("query matrix must have shape [batch, embedding_dim]")
+
+        if queries.shape[0] == 0 or not np.isfinite(queries).all():
+            raise ValueError("query matrix must be non-empty and finite")
+
+        norms = np.linalg.norm(queries, axis=1, keepdims=True)
+        if np.any(norms == 0):
+            raise ValueError("zero-norm query vector")
+
+        queries = queries / norms
+        k = min(k, len(self.record_ids))
+
+        start = time.perf_counter()
+
+        # Matrix multiplication processes multiple queries together.
+        scores = queries @ self.embeddings.T
+
+        indices = np.argpartition(-scores, k - 1, axis=1)[:, :k]
+
+        selected_scores = np.take_along_axis(scores, indices, axis=1)
+        order = np.argsort(-selected_scores, axis=1)
+
+        indices = np.take_along_axis(indices, order, axis=1)
+
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+
+        results = []
+
+        for row_index, row_indices in enumerate(indices):
+            results.append({
+                "record_ids": [
+                    self.record_ids[int(i)]
+                    for i in row_indices
+                ],
+                "scores": [
+                    float(scores[row_index, int(i)])
+                    for i in row_indices
+                ],
+                "latency_ms": elapsed_ms / len(indices),
+            })
+
+        return results
