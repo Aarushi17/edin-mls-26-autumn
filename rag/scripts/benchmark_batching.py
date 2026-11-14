@@ -99,6 +99,7 @@ def compare_results(reference, candidate):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--dtype", choices=["float16", "float32"], default="float16")
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--k", type=int, default=20)
     parser.add_argument("--limit", type=int, default=100)
@@ -118,12 +119,14 @@ def main():
 
     print(f"Queries: {len(texts)}", flush=True)
     print(f"Device: {args.device}", flush=True)
+    print(f"Precision: {args.dtype}", flush=True)
     print(f"Repeats: {args.repeats}", flush=True)
 
     print("\nLoading encoder...", flush=True)
     encoder = LocalEncoder(
         ROOT / "models/enc_a",
         device=args.device,
+        dtype=args.dtype,
     )
 
     print("Loading exact retriever...", flush=True)
@@ -204,7 +207,7 @@ def main():
                 flush=True,
             )
 
-    output = ROOT / "results/batching_benchmark.csv"
+    output = ROOT / f"results/batching_benchmark_{args.dtype}.csv"
     output.parent.mkdir(parents=True, exist_ok=True)
 
     with output.open("w", newline="", encoding="utf-8") as f:

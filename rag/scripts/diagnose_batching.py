@@ -88,6 +88,7 @@ def print_comparison(name, reference, candidate):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--dtype", choices=["float16", "float32"], default="float16")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--limit", type=int, default=100)
     parser.add_argument("--k", type=int, default=20)
@@ -101,11 +102,16 @@ def main():
 
     print(f"Queries: {len(texts)}")
     print(f"Device: {args.device}")
+    print(f"Precision: {args.dtype}")
     print(f"Batch size: {args.batch_size}")
     print(f"Retrieval k: {args.k}")
 
     print("\nLoading encoder...")
-    encoder = LocalEncoder(ROOT / "models/enc_a", device=args.device)
+    encoder = LocalEncoder(
+        ROOT / "models/enc_a",
+        device=args.device,
+        dtype=args.dtype,
+    )
 
     print("Loading retriever...")
     data_dir = ROOT / "data/rag_corpus"
