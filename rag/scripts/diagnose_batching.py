@@ -85,6 +85,60 @@ def print_comparison(name, reference, candidate):
     print(f"  Max shared-score diff:   {result['max_score_diff']:.8f}")
 
 
+
+def inspect_rank_changes(reference, candidate, rows):
+    print("\nRANK POSITION ANALYSIS")
+
+    changed_queries = 0
+    top5_set_changes = 0
+    top5_order_changes = 0
+    all_changed_positions = []
+
+    for i, (ref, new) in enumerate(zip(reference, candidate)):
+        ref_ids = list(ref["record_ids"])
+        new_ids = list(new["record_ids"])
+
+        if ref_ids == new_ids:
+            continue
+
+        changed_queries += 1
+        positions = [
+            rank + 1
+            for rank, (a, b) in enumerate(zip(ref_ids, new_ids))
+            if a != b
+        ]
+        all_changed_positions.extend(positions)
+
+        ref_top5 = ref_ids[:5]
+        new_top5 = new_ids[:5]
+
+        set_changed = set(ref_top5) != set(new_top5)
+        order_changed = ref_top5 != new_top5
+
+        top5_set_changes += set_changed
+        top5_order_changes += order_changed
+
+        print(f"\nQuery {i + 1} (cache index {i})")
+        print(f"  Changed rank positions: {positions}")
+        print(f"  Top-5 set changed: {set_changed}")
+        print(f"  Top-5 order changed: {order_changed}")
+
+        for rank in positions:
+            print(
+                f"  Rank {rank}: "
+                f"{ref_ids[rank - 1]} -> {new_ids[rank - 1]}"
+            )
+
+    print("\nSUMMARY")
+    print(f"Queries with changed top-20 order: {changed_queries}")
+    print(f"Queries with changed top-5 set: {top5_set_changes}")
+    print(f"Queries with changed top-5 order: {top5_order_changes}")
+
+    if all_changed_positions:
+        print(f"Earliest affected rank: {min(all_changed_positions)}")
+        print(f"Latest affected rank: {max(all_changed_positions)}")
+        print(f"All changed rank positions: {sorted(set(all_changed_positions))}")
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", default="cpu")
@@ -174,6 +228,8 @@ def main():
         "3. Batched encoding, batched retrieval",
         reference, combined
     )
+
+    inspect_rank_changes(reference, combined, rows)
 
     print("\nDiagnostic complete.")
 
