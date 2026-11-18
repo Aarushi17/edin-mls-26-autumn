@@ -1,6 +1,7 @@
+
 // Task 3: the linear layer as a tiled GEMM. Read docs/task3-gemm.md first.
 //
-//     y[M, N] = act( x[M, K] * w[N, K]^T + bias[N] )
+// y[M, N] = act(x[M, K] * w[N, K]^T + bias[N])
 //
 // This is the tiled GEMM from cuda-tutorial/5-tiled-gemm, with three changes:
 //   1. w is stored the way PyTorch stores Linear weights: one row per OUTPUT
@@ -9,83 +10,117 @@
 //      (the "epilogue"), so no extra kernel has to read y again.
 //   3. every Linear layer of the ASR model and both convolutions run through it.
 //
-// Block (TILE x TILE threads) computes a TILE x TILE piece of y. Thread (ty, tx)
-// computes y[row][col] with row = blockIdx.y*TILE + ty, col = blockIdx.x*TILE + tx.
-// The block walks along K one tile at a time, staging a tile of x and a tile of w
-// in shared memory so every loaded value is used TILE times.
+// Block (TILE x TILE threads) computes a TILE x TILE piece of y.
+// Thread (ty, tx) computes y[row][col] with:
+//   row = blockIdx.y * TILE + ty
+//   col = blockIdx.x * TILE + tx
+//
+// The block walks along K one tile at a time, staging a tile of x and a tile
+// of w in shared memory so every loaded value is used TILE times.
+
 #include "asr_kernels.h"
 #include "common.cuh"
 
-constexpr int TILE = 16;  // try 8 or 32 (32 x 32 = 1024 threads, the maximum per block)
+constexpr int TILE = 16;  // Try 8 or 32 (32 x 32 = 1024 threads, maximum per block)
 
-__global__ void linear_tiled_kernel(const float* x, const float* w, const float* bias,
-                                    float* y, int M, int N, int K, int act) {
-  __shared__ float xs[TILE][TILE];      // xs[m][k]: rows of x for this block
-  __shared__ float ws[TILE][TILE + 1];  // ws[n][k]: rows of w for this block (+1: see Try this)
+__global__ void linear_tiled_kernel(
+    const float* x,
+    const float* w,
+    const float* bias,
+    float* y,
+    int M,
+    int N,
+    int K,
+    int act) {
 
-  const int tx = threadIdx.x;
-  const int ty = threadIdx.y;
-  const int row = blockIdx.y * TILE + ty;  // the output row this thread computes
-  const int col = blockIdx.x * TILE + tx;  // the output column this thread computes
+    __shared__ float xs[TILE][TILE];
+    __shared__ float ws[TILE][TILE + 1];
 
-  float acc = 0.0f;
-  for (int k0 = 0; k0 < K; k0 += TILE) {
-    // ======================== BLANK 3.1 =========================
-    // Load this thread's element of the x tile into xs. Use 0 outside x.
-    int x_col = k0 + tx;
+    const int tx = threadIdx.x;
+    const int ty = threadIdx.y;
 
-    xs[ty][tx] = (row < M && x_col < K)
-    	? x[row * K + x_col]
-    	: 0.0f;	
-    // ============================================================
+    const int row = blockIdx.y * TILE + ty;
+    const int col = blockIdx.x * TILE + tx;
 
-    // ======================== BLANK 3.2 =========================
-    // Load this thread's element of the w tile, so that ws[n][k] holds
-    // w[blockIdx.x * TILE + n][k0 + k]. Use 0 outside w. Threads with consecutive
-    // tx must read consecutive addresses of w.
-    int w_row = blockIdx.x * TILE + ty;
-	int w_col = k0 + tx;
+    float acc = 0.0f;
 
-	ws[ty][tx] = (w_row < N && w_col < K)
-    	? w[w_row * K + w_col]
-    	: 0.0f;	
-    // ============================================================
+    for (int k0 = 0; k0 < K; k0 += TILE) {
 
-    // ======================== BLANK 3.3 =========================
-    // Add this K step's contribution to acc.
-    __syncthreads();
+        // ======================== BLANK 3.1 =========================
+        // Load this thread's element of the x tile into xs.
+        // Use 0 outside x.
 
-    for (int k = 0; k < TILE; ++k) {
-    	acc += xs[ty][k] * ws[tx][k];
-   }
+        int x_col = k0 + tx;
 
-   __syncthreads();
-    // ============================================================
-  }
+        xs[ty][tx] = (row < M && x_col < K)
+                         ? x[row * K + x_col]
+                         : 0.0f;
 
-  // ======================== BLANK 3.4 =========================
-  // Epilogue: for outputs inside y, add bias[col] (bias may be nullptr), apply
-  // gelu() when act == ACT_GELU, and store.
-    if (row < M && col < N) {
-   	 float value = acc;
+        // ============================================================
 
-   	 if (bias != nullptr) {
-       		 value += bias[col];
-    	}
+        // ======================== BLANK 3.2 =========================
+        // Load this thread's element of the w tile.
+        // Threads with consecutive tx read consecutive addresses of w.
 
-   	 if (act == ACT_GELU) {
-        	value = gelu(value);
+        int w_row = blockIdx.x * TILE + ty;
+        int w_col = k0 + tx;
+
+        ws[ty][tx] = (w_row < N && w_col < K)
+                         ? w[w_row * K + w_col]
+                         : 0.0f;
+
+        // ============================================================
+
+        // ======================== BLANK 3.3 =========================
+        // Add this K step's contribution to acc.
+
+        __syncthreads();
+
+        for (int k = 0; k < TILE; ++k) {
+            acc += xs[ty][k] * ws[tx][k];
+        }
+
+        __syncthreads();
+
+        // ============================================================
     }
 
-    y[row * N + col] = value;
-}
-  // ============================================================
+    // ======================== BLANK 3.4 =========================
+    // Epilogue: add bias, apply GELU if requested, and store.
+
+    if (row < M && col < N) {
+        float value = acc;
+
+        if (bias != nullptr) {
+            value += bias[col];
+        }
+
+        if (act == ACT_GELU) {
+            value = gelu(value);
+        }
+
+        y[row * N + col] = value;
+    }
+
+    // ============================================================
 }
 
-ASR_API int launch_linear(const float* x, const float* w, const float* bias, float* y,
-                          int M, int N, int K, int act, cudaStream_t stream) {
-  dim3 block(TILE, TILE);
-  dim3 grid(ceil_div(N, TILE), ceil_div(M, TILE));
-  linear_tiled_kernel<<<grid, block, 0, stream>>>(x, w, bias, y, M, N, K, act);
-  RETURN_LAUNCH_ERROR();
+ASR_API int launch_linear(
+    const float* x,
+    const float* w,
+    const float* bias,
+    float* y,
+    int M,
+    int N,
+    int K,
+    int act,
+    cudaStream_t stream) {
+
+    dim3 block(TILE, TILE);
+    dim3 grid(ceil_div(N, TILE), ceil_div(M, TILE));
+
+    linear_tiled_kernel<<<grid, block, 0, stream>>>(
+        x, w, bias, y, M, N, K, act);
+
+    RETURN_LAUNCH_ERROR();
 }
